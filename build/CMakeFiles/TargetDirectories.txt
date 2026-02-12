@@ -1,4 +1,0 @@
-/home/aaron/Desktop/ctest/nw/build/CMakeFiles/gateway.dir
-/home/aaron/Desktop/ctest/nw/build/CMakeFiles/client.dir
-/home/aaron/Desktop/ctest/nw/build/CMakeFiles/edit_cache.dir
-/home/aaron/Desktop/ctest/nw/build/CMakeFiles/rebuild_cache.dir

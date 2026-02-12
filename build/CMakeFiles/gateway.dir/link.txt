@@ -1,1 +1,0 @@
-/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/gateway.dir/link.d CMakeFiles/gateway.dir/gateway.cpp.o CMakeFiles/gateway.dir/server.cpp.o CMakeFiles/gateway.dir/orderbook.cpp.o -o gateway
