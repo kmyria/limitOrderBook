@@ -1,65 +1,17 @@
 // client.cpp
 
+#include "client.hpp"
 #include <iostream>
-#include <netdb.h>
-#include <stdlib.h>
 #include <string.h>
 #include <string>
-#include <sys/socket.h>
+#include <string_view>
 #include <thread>
-#include <unistd.h>
 
 #define PORT "1337"
 
-void request_stop_and_close(std::stop_source& ss, const int& sockfd)
-{
-    ss.request_stop();
-    ::shutdown(sockfd, SHUT_RDWR);
-    // close(sockfd);
-    // shutdown is superior as it avoid ^D bug
-}
-
-void thread_send(std::stop_token st, std::stop_source& ss, const int& sockfd)
-{
-    while (!st.stop_requested()) {
-        std::cout << "Me: " << std::flush;
-        std::string s;
-        if (!std::getline(std::cin, s)) {
-            request_stop_and_close(ss, sockfd);
-            return;
-        }
-        if (send(sockfd, s.c_str(), s.length(), 0) == -1) {
-            request_stop_and_close(ss, sockfd);
-            return;
-        }
-    }
-}
-
-void thread_recv(std::stop_token st, std::stop_source& ss, const int& sockfd)
-{
-    while (!st.stop_requested()) {
-        char buf[1024];
-        int bytes_recv = recv(sockfd, buf, sizeof(buf) - 1, 0);
-        if (bytes_recv <= 0) {
-            if (bytes_recv == 0) {
-            } else {
-                std::cerr << "recv error\n";
-            }
-            request_stop_and_close(ss, sockfd);
-            return;
-        }
-        std::cout << std::string_view(buf) << std::endl;
-    }
-}
-
 int main(void)
 {
-    char hostname[1024];
-    if (gethostname(hostname, sizeof hostname) == -1) {
-        fprintf(stderr, "hostname error\n");
-        exit(1);
-    }
-    printf("client.c running on %s\n", hostname);
+    show_hostname();
 
     struct addrinfo hints, *res;
     int sockfd;
@@ -101,4 +53,56 @@ int main(void)
 
     close(sockfd);
     return 0;
+}
+
+void show_hostname()
+{
+    char hostname[1024];
+    if (gethostname(hostname, sizeof hostname) == -1) {
+        std::cerr << "hostname error\n";
+        std::exit(1);
+    }
+    std::cout << "client.cpp running on " << hostname << "\n";
+    return;
+}
+
+void request_stop_and_close(std::stop_source& ss, const int& sockfd)
+{
+    ss.request_stop();
+    ::shutdown(sockfd, SHUT_RDWR);
+    // close(sockfd);
+    // shutdown is superior as it avoids ^D bug
+}
+
+void thread_send(std::stop_token st, std::stop_source& ss, const int& sockfd)
+{
+    while (!st.stop_requested()) {
+        std::cout << "Me: " << std::flush;
+        std::string s;
+        if (!std::getline(std::cin, s)) {
+            request_stop_and_close(ss, sockfd);
+            return;
+        }
+        if (send(sockfd, s.c_str(), s.length(), 0) == -1) {
+            request_stop_and_close(ss, sockfd);
+            return;
+        }
+    }
+}
+
+void thread_recv(std::stop_token st, std::stop_source& ss, const int& sockfd)
+{
+    while (!st.stop_requested()) {
+        char buf[1024];
+        int bytes_recv = recv(sockfd, buf, sizeof(buf) - 1, 0);
+        if (bytes_recv <= 0) {
+            if (bytes_recv == 0) {
+            } else {
+                std::cerr << "recv error\n";
+            }
+            request_stop_and_close(ss, sockfd);
+            return;
+        }
+        std::cout << std::string_view(buf) << std::endl;
+    }
 }

@@ -1,21 +1,25 @@
 // server.cpp
 
+#include "server.hpp"
 #include <algorithm>
-#include <arpa/inet.h>
+#include <charconv>
 #include <cstdlib>
-#include <fcntl.h>
 #include <iostream>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sstream>
-#include <sys/epoll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <vector>
+#include <memory>
 
 #define PORT "1337"
+
+void run_server(int epollfd, std::vector<struct epoll_event>& events,
+    int& listener, std::vector<int>& connections,
+    std::unique_ptr<Ringbuffer<q_order, CAP>>& ring_buffer)
+{
+    int n {};
+    if ((n = epoll_wait(epollfd, events.data(), events.size(), -1)) == -1) {
+        std::cerr << "poll error\n";
+        exit(1);
+    }
+    process_connections(listener, events, n, epollfd, connections, ring_buffer);
+}
 
 int setnonblocking(int sockfd)
 {
@@ -25,6 +29,7 @@ int setnonblocking(int sockfd)
     }
     return 0;
 }
+
 void show_hostname()
 {
     char hostname[1024];
@@ -135,8 +140,9 @@ void handle_new_connection(
     }
 }
 
-void handle_client_data(int listener, epoll_event& event, int& epollfd,
-    std::vector<int>& connections)
+void handle_client_data(epoll_event& event, int& epollfd,
+    std::vector<int>& connections,
+    std::unique_ptr<Ringbuffer<q_order, CAP>>& ring_buffer)
 {
     char buf[1024];
     int sender_fd = event.data.fd;
@@ -148,77 +154,100 @@ void handle_client_data(int listener, epoll_event& event, int& epollfd,
         } else {
             std::cerr << "recv error\n";
         }
-        // TODO: optimise this O(n) into O(1)
+        // NOTE: std::vector for small connections
         connections.erase(
             std::find(connections.begin(), connections.end(), sender_fd));
 
         epoll_ctl(epollfd, EPOLL_CTL_DEL, sender_fd, nullptr);
         close(sender_fd);
     } else {
+        std::string str(buf, bytes_rec);
+
         std::cout << "pollserver: socket received " << bytes_rec
-                  << " bytes from fd " << sender_fd << " :" << buf << "\n";
+                  << " bytes from fd " << sender_fd << " : " << str << "\n";
 
-        std::stringstream ss;
-        ss << sender_fd << ": " << buf;
-        std::string msg = ss.str();
-
-        for (const auto& dest_fd : connections) {
-            if (dest_fd != listener && dest_fd != sender_fd) {
-                if (send(dest_fd, msg.c_str(), msg.length(), 0) == -1) {
-                    std::cerr << "send error\n";
-                }
-            }
+        q_order order {};
+        if (parse_order(str, order)) {
+            ring_buffer->push(order);
+        } else {
+            std::cerr << "failed to parse order";
         }
     }
 }
 
 void process_connections(int listener, std::vector<struct epoll_event>& events,
-    int& n, int& epollfd, std::vector<int>& connections)
+    int& n, int& epollfd, std::vector<int>& connections,
+    std::unique_ptr<Ringbuffer<q_order, CAP>>& ring_buffer)
 {
-
     for (int i {}; i < n; i++) {
         if (events[i].events & (EPOLLIN | EPOLLHUP | EPOLLRDHUP | EPOLLERR)) {
             if (events[i].data.fd == listener) {
                 handle_new_connection(listener, epollfd, connections);
             } else {
-                handle_client_data(listener, events[i], epollfd, connections);
+                handle_client_data(
+                    events[i], epollfd, connections, ring_buffer);
             }
         }
     }
 }
 
-int main(void)
+const char* skip_ws(const char* p, const char* end)
 {
-    int listener {};
+    while (p < end && std::isspace((unsigned char)*p))
+        ++p;
+    return p;
+}
 
-    show_hostname();
-    listener = get_listener_socket();
-    setnonblocking(listener);
+bool parse_order(std::string_view sv, q_order& order)
+{
+    const char* p = sv.data();
+    const char* end = sv.data() + sv.size();
 
-    int epollfd = epoll_create1(0);
-    if (epollfd == -1) {
-        std::cerr << "epoll_create1\n";
-        std::exit(1);
-    }
+    p = skip_ws(p, end);
 
-    std::vector<int> connections { listener };
-    std::vector<struct epoll_event> events(64);
-
+    bool b {};
     {
-        struct epoll_event ev
-            = { .events = EPOLLIN, .data = { .fd = listener } };
-        epoll_ctl(epollfd, EPOLL_CTL_ADD, listener, &ev);
+        int temp;
+        auto [ptr, ec] = std::from_chars(p, end, temp);
+        if (ec != std::errc() || !(temp == 1 || temp == 0))
+            return false;
+        b = (temp == 1);
+        p = ptr;
     }
 
-    std::cout << "pollserver is waiting for connections\n";
-    for (;;) {
-        int n {};
-        if ((n = epoll_wait(epollfd, events.data(), events.size(), -1)) == -1) {
-            std::cerr << "poll error\n";
-            exit(1);
-        }
-        process_connections(listener, events, n, epollfd, connections);
+    p = skip_ws(p, end);
+
+    double price {};
+    {
+        double temp;
+        auto [ptr, ec]
+            = std::from_chars(p, end, temp, std::chars_format::general);
+        if (ec != std::errc())
+            return false;
+        price = temp;
+        p = ptr;
     }
-    close(listener);
-    return 0;
+
+    p = skip_ws(p, end);
+
+    uint32_t qty {};
+    {
+        uint32_t temp;
+        auto [ptr, ec] = std::from_chars(p, end, temp);
+        if (ec != std::errc())
+            return false;
+        qty = temp;
+        p = ptr;
+    }
+
+    p = skip_ws(p, end);
+
+    if (p != end)
+        return false;
+
+    order.is_buy = b;
+    order.price = price;
+    order.quantity = qty;
+
+    return true;
 }
