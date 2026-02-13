@@ -1,6 +1,6 @@
 # Low-Latency Limit Order Book & Matching Engine
 
-High performance multi-threaded exchange simulator written in C++20. Designed to simulate architecture of real-world trading system, focusing on deterministic latency, cache locality, and lock-free concurrency.
+High performance multi-threaded exchange simulator written in modern C++. Designed to simulate architecture of real-world trading system, focusing on deterministic latency, cache locality, and lock-free concurrency.
 
 ## Architecture
 
