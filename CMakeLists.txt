@@ -3,17 +3,18 @@ project(mttg LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(GATEWAY_SOURCES
-    gateway.cpp
-    server.cpp
-    orderbook.cpp
+    src/common/gateway.cpp
+    src/common/orderbook.cpp
+    src/server/server.cpp
 )
 
 set(GATEWAY_HEADERS
-    server.hpp
-    orderbook.hpp
-    ringbuffer.hpp
+    src/common/orderbook.hpp
+    src/common/ringbuffer.hpp
+    src/server/server.hpp
 )
 
 add_executable(gateway
@@ -22,8 +23,20 @@ add_executable(gateway
 )
 
 add_executable(client
-    client.cpp
-    client.hpp
+    src/client/client.cpp
+    src/client/client.hpp
+)
+
+target_include_directories(gateway
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/server
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/client
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+)
+
+target_include_directories(client
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/client
 )
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
