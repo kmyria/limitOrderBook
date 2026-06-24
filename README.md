@@ -13,11 +13,11 @@ The system follows a classic producer-consumer architecture separated into two p
 
 2.  **Matching engine (Consumer):**
     *   Implements price-time priority matching algorithm.
-    *   Utilizes contiguous memory containers for the orderbook to maximize L1/L2 cache hits, preferring linear scans over pointer chasing (`std::map`) for small N depth.
+    *   Utilizes contiguous memory containers for the orderbook to maximize L1/L2 cache hits.
     *   Deterministic execution path with zero dynamic allocation in the hot path.
 
 3.  **Inter-thread communication:**
-    *   Connected via a custom single-producer single-consumer (SPSC) lock-free ring buffer.
+    *   Connected via a custom SPSC lock free ring buffer.
     *   Uses memory ordering constraints (`acquire`/`release`) to enforce synchronization without mutexes or kernel-level locking overhead.
 
 
@@ -40,3 +40,4 @@ cd build/
 ```
 
 The server listens on port 1337. Clients can connect via Telnet or `./build/client`.
+
