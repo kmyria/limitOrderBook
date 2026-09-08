@@ -7,13 +7,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(GATEWAY_SOURCES
     src/common/gateway.cpp
-    src/common/orderbook.cpp
     src/server/server.cpp
 )
 
 set(GATEWAY_HEADERS
     src/common/orderbook.hpp
     src/common/ringbuffer.hpp
+    src/common/fastqueue.hpp
     src/server/server.hpp
 )
 
@@ -25,6 +25,10 @@ add_executable(gateway
 add_executable(client
     src/client/client.cpp
     src/client/client.hpp
+)
+
+add_executable(benchmark
+    src/bench/benchmark.cpp
 )
 
 target_include_directories(gateway
@@ -39,10 +43,17 @@ target_include_directories(client
         ${CMAKE_CURRENT_SOURCE_DIR}/src/client
 )
 
+target_include_directories(benchmark
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+)
+
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(gateway PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(client  PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(gateway    PRIVATE -Wall -Wextra -Wpedantic -mavx2)
+    target_compile_options(client     PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(benchmark  PRIVATE -Wall -Wextra -Wpedantic)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(gateway PRIVATE /W4)
-    target_compile_options(client  PRIVATE /W4)
+    target_compile_options(gateway    PRIVATE /W4)
+    target_compile_options(client     PRIVATE /W4)
+    target_compile_options(benchmark  PRIVATE /W4)
 endif()

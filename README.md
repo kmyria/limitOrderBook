@@ -4,7 +4,7 @@ High performance multi-threaded exchange simulator written in modern C++. Design
 
 ## Architecture
 
-The system follows a classic producer-consumer architecture separated into two pinned threads to minimize context switching:
+The system follows a classic producer-consumer architecture separated into two threads to minimize context switching:
 
 1.  **Network gateway (Producer):**
     *   Utilizes epoll for O(1) I/O multiplexing.
@@ -12,14 +12,16 @@ The system follows a classic producer-consumer architecture separated into two p
     *   Non-blocking I/O loop designed to prevent thread starvation.
 
 2.  **Matching engine (Consumer):**
-    *   Implements price-time priority matching algorithm.
-    *   Utilizes contiguous memory containers for the orderbook to maximize L1/L2 cache hits.
-    *   Deterministic execution path with zero dynamic allocation in the hot path.
+    *   Implements price-time priority matching on a **price ladder**: each side is a `std::map<uint32_t, std::list<Order>>` keyed by price (integer cents), with FIFO per price level. Partial fills decrement in place; empty levels are removed.
+    *   Zero dynamic allocation in the hot path is a goal, not yet met — resting orders allocate per-order nodes. See `TODO.md`.
 
 3.  **Inter-thread communication:**
-    *   Connected via a custom SPSC lock free ring buffer.
-    *   Uses memory ordering constraints (`acquire`/`release`) to enforce synchronization without mutexes or kernel-level locking overhead.
+    *   A single-producer single-consumer `FastQueue` (lock-free, cache-line padded) connects the gateway to the matching engine.
+    *   Blocking `push`/`pop` spin loops with `stopQueue()` for clean shutdown.
 
+4.  **Thread pinning** (real-time scheduling, core affinity) is planned but not yet implemented — see `TODO.md`.
+
+Prices are handled as **integer cents** end-to-end (no floating point on the price path); the wire format is `is_buy price_cents quantity`, e.g. `1 10050 5`.
 
 ## Build & Run
 
@@ -27,17 +29,24 @@ The system follows a classic producer-consumer architecture separated into two p
 *   c++23 compliant compiler
 *   cmake 3.16
 
-**Compilation:**
+**Compilation (Release is required for meaningful performance numbers):**
 ```bash
-cmake -B build
+cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
 **Usage:**
 ```bash
-cd build/
-./build/gateway
+./build/gateway            # server on port 1337
+./build/client             # interactive client
+./build/benchmark 1000000          # flood throughput
+./build/benchmark 1000000 paced    # single-order latency
+./build/benchmark 1000000 sweep    # ring-size sweep
 ```
 
 The server listens on port 1337. Clients can connect via Telnet or `./build/client`.
 
+## Docs
+
+*   [`BENCHMARK.md`](BENCHMARK.md) — measurements and analysis of the FastQueue → matching-engine pipeline.
+*   [`TODO.md`](TODO.md) — correctness and optimization backlog.

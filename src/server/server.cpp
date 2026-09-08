@@ -1,6 +1,7 @@
 // server.cpp
 
 #include "server.hpp"
+#include "fastqueue.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdlib>
@@ -10,14 +11,15 @@
 #define PORT "1337"
 
 void run_server(int epollfd, std::vector<struct epoll_event>& events, int& listener,
-    std::vector<int>& connections, std::unique_ptr<Ringbuffer<q_order, CAP>>& ring_buffer)
+    std::vector<int>& connections, FastQueue<Order, QUEUE_MASK, L1_CACHE_LINE>& fastQueue
+)
 {
         int n { };
-        if ((n = epoll_wait(epollfd, events.data(), events.size(), -1)) == -1) {
+        if ((n = epoll_wait(epollfd, events.data(), events.size(), 100)) == -1) {
                 std::cerr << "poll error\n";
                 exit(1);
         }
-        process_connections(listener, events, n, epollfd, connections, ring_buffer);
+        process_connections(listener, events, n, epollfd, connections, fastQueue);
 }
 
 int setnonblocking(int sockfd)
@@ -138,7 +140,7 @@ void handle_new_connection(int listener, int& epollfd, std::vector<int>& connect
 }
 
 void handle_client_data(epoll_event& event, int& epollfd, std::vector<int>& connections,
-    std::unique_ptr<Ringbuffer<q_order, CAP>>& ring_buffer)
+   FastQueue<Order, QUEUE_MASK, L1_CACHE_LINE>& fastQueue)
 {
         char buf[1024];
         int sender_fd = event.data.fd;
@@ -160,9 +162,9 @@ void handle_client_data(epoll_event& event, int& epollfd, std::vector<int>& conn
                 std::cout << "pollserver: socket received " << bytes_rec << " bytes from fd "
                           << sender_fd << " : " << str << "\n";
 
-                q_order order { };
+                Order order { };
                 if (parse_order(str, order)) {
-                        ring_buffer->push(order);
+                        fastQueue.push(order);
                 } else {
                         std::cerr << "failed to parse order";
                 }
@@ -171,14 +173,14 @@ void handle_client_data(epoll_event& event, int& epollfd, std::vector<int>& conn
 
 void process_connections(int listener, std::vector<struct epoll_event>& events, int& n,
     int& epollfd, std::vector<int>& connections,
-    std::unique_ptr<Ringbuffer<q_order, CAP>>& ring_buffer)
+    FastQueue<Order, QUEUE_MASK, L1_CACHE_LINE>& fastQueue)
 {
         for (int i { }; i < n; i++) {
                 if (events[i].events & (EPOLLIN | EPOLLHUP | EPOLLRDHUP | EPOLLERR)) {
                         if (events[i].data.fd == listener) {
                                 handle_new_connection(listener, epollfd, connections);
                         } else {
-                                handle_client_data(events[i], epollfd, connections, ring_buffer);
+                                handle_client_data(events[i], epollfd, connections, fastQueue);
                         }
                 }
         }
@@ -191,7 +193,7 @@ const char* skip_ws(const char* p, const char* end)
         return p;
 }
 
-bool parse_order(std::string_view sv, q_order& order)
+bool parse_order(std::string_view sv, Order& order)
 {
         const char* p = sv.data();
         const char* end = sv.data() + sv.size();
@@ -210,10 +212,10 @@ bool parse_order(std::string_view sv, q_order& order)
 
         p = skip_ws(p, end);
 
-        double price { };
+        uint32_t price { };
         {
-                double temp;
-                auto [ptr, ec] = std::from_chars(p, end, temp, std::chars_format::general);
+                uint32_t temp;
+                auto [ptr, ec] = std::from_chars(p, end, temp);
                 if (ec != std::errc())
                         return false;
                 price = temp;

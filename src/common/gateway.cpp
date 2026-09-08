@@ -1,9 +1,10 @@
 // gateway.cpp
 
-#include "client.hpp"
 #include "orderbook.hpp"
-#include "ringbuffer.hpp"
+#include "fastqueue.hpp"
 #include "server.hpp"
+#include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <iostream>
 #include <memory>
@@ -12,25 +13,32 @@
 #include <thread>
 #include <vector>
 
+namespace {
+volatile std::sig_atomic_t g_stop_requested = 0;
+}
+
 void network_io_worker(std::stop_token st, struct state& gate, std::vector<int>& connections);
 void matching_engine_worker(std::stop_token st, struct state& gate);
 
-void signal_handler(std::stop_source& ss) { ss.request_stop(); }
+void signal_handler(int)
+{
+        g_stop_requested = 1;
+}
 
 struct state {
         int listener { };
         int epollfd;
         std::vector<struct epoll_event> events;
-        std::unique_ptr<Ringbuffer<q_order, CAP>> ring_buf;
-        std::unique_ptr<OrderBook> book;
+        FastQueue<Order, QUEUE_MASK, L1_CACHE_LINE> fastQueue;
+        std::unique_ptr<OrderBook<>> book;
         std::stop_source ss;
 
         state(size_t size)
             : listener(get_listener_socket())
             , epollfd(-1)
             , events(size)
-            , ring_buf(std::make_unique<Ringbuffer<q_order, CAP>>())
-            , book(std::make_unique<OrderBook>())
+            , fastQueue(FastQueue<Order, QUEUE_MASK, L1_CACHE_LINE>())
+            , book(std::make_unique<OrderBook<>>())
         {
         }
         void request_shutdown() { ss.request_stop(); }
@@ -39,6 +47,8 @@ struct state {
 int main()
 {
         std::cin.tie(nullptr);
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
 
         struct state gate(64);
         std::vector<int> connections { gate.listener };
@@ -61,9 +71,14 @@ int main()
             [&](std::stop_token st) { matching_engine_worker(st, gate); });
 
         while (!gate.ss.stop_requested()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (g_stop_requested) {
+                        gate.request_shutdown();
+                } else {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
         }
 
+        gate.fastQueue.stopQueue();
         close(gate.listener);
         return 0;
 }
@@ -71,17 +86,17 @@ int main()
 void network_io_worker(std::stop_token st, struct state& gate, std::vector<int>& connections)
 {
         while (!st.stop_requested()) {
-                run_server(gate.epollfd, gate.events, gate.listener, connections, gate.ring_buf);
+                run_server(gate.epollfd, gate.events, gate.listener, connections, gate.fastQueue);
         }
 }
 
 void matching_engine_worker(std::stop_token st, struct state& gate)
 {
-        q_order order;
         while (!st.stop_requested()) {
-                if (gate.ring_buf->pop(order)) {
-                        gate.book->add_order(order.is_buy, order.price, order.quantity);
-                        gate.book->status();
-                }
+                Order order = gate.fastQueue.pop();
+                if (gate.fastQueue.isQueueStopped())
+                        break;
+                gate.book->add_order(order.is_buy, order.price, order.quantity);
+                gate.book->status();
         }
 }
